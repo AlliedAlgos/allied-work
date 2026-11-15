@@ -1,0 +1,394 @@
+BUILD INSTRUCTIONS FOR CLAUDE CODE
+FLL Mission Control (Pybricks + SPIKE Prime)
+==================================================================
+
+HOW TO USE THIS FILE
+--------------------
+Put this file in an empty project folder together with:
+  - CLAUDE.md                 (project context; keep it in the repo root)
+  - field/missions.json       (field model; keep it at this path)
+Then tell Claude Code:
+  "Read BUILD_INSTRUCTIONS.txt and CLAUDE.md, then build the project phase by
+   phase. Stop after each phase, run its checks, and summarize before moving on."
+
+Claude Code: follow the phases in order. Do not skip the acceptance checks.
+If anything here conflicts with the current Pybricks or pybricksdev docs, the
+docs win: check them, choose the working approach, and note the change in
+docs/DECISIONS.md.
+
+
+==================================================================
+0. PROJECT SUMMARY
+==================================================================
+A toolkit for FLL teams using a LEGO SPIKE Prime hub running Pybricks firmware.
+
+  1. Robot library (runs on the hub, MicroPython): simple motion commands
+     (drive, turn, drive_to...), an always-running PID controller that moves
+     current_pos toward target_pos, pose tracking (x, y, heading) and a
+     telemetry stream.
+  2. Bridge + server (runs on the PC, Python 3.10+): connects to the hub over
+     Bluetooth, uploads and runs mission programs, reads telemetry, and serves
+     a localhost web page over HTTP + WebSocket.
+  3. Dashboard (browser, http://localhost:8000): live field map on a 1 in grid,
+     live graphs, run controls, click-to-plot polygons and waypoints, and code
+     generation from waypoints.
+  4. Field model (field/missions.json): the whole mat in inches, missions as
+     polygons, launch areas, obstacles, runs.
+  5. Simulator: a fake robot on the PC that runs the same mission files, so
+     everything can be built and tested without a hub.
+
+Users are FLL students (ages ~9-16) and coaches. Favor simple, readable code
+and clear error messages over cleverness.
+
+
+==================================================================
+1. CONVENTIONS (MUST MATCH CLAUDE.md)
+==================================================================
+- Units: inches for distance, degrees for angles, inches/second for speed,
+  degrees/second for turn rate. Convert to mm only at the Pybricks motor layer.
+- Mat: about 93 x 45 in (read real values from field/missions.json "mat").
+- Origin (0,0) = bottom-left corner of the mat from the team's side.
+  +x = right, +y = up (toward the far wall).
+- Heading: 0 = facing +y, positive = clockwise, range (-180, 180].
+  90 = facing +x. turn(+angle) turns right (clockwise), same as Pybricks.
+- Moving distance d at heading h:  dx = d*sin(h),  dy = d*cos(h).
+- Heading to a point: atan2(dx, dy) in degrees.
+- Pose = (x, y, heading). Robot position = the point given by
+  robot.center_offset_in in missions.json (default: middle of drive axle).
+
+
+==================================================================
+2. REPO LAYOUT
+==================================================================
+fll-mission-control/
+  CLAUDE.md
+  BUILD_INSTRUCTIONS.txt
+  README.md                    student-friendly setup + usage guide
+  requirements.txt
+  field/
+    missions.json              field model (source of truth)
+    missions.schema.json       JSON schema for validation
+    mat.png                    OPTIONAL photo/scan of the mat (user supplies)
+  robot/                       runs ON THE HUB (MicroPython / Pybricks)
+    config.py                  ports, wheel size, axle track, PID gains
+    geometry.py                angle wrap, unit conversion, waypoint math
+    pose.py                    odometry + gyro pose estimator
+    controller.py              always-on PID loop (distance + heading)
+    telemetry.py               compact telemetry encoder + command reader
+    api.py                     public mission API (drive, turn, ...)
+    launcher.py                hub menu to pick a run with the buttons
+  missions/
+    run1.py ...                one file per run, each defines run()
+    _template.py
+  pc/                          runs ON THE PC (CPython)
+    server.py                  entry point: `python -m pc.server`
+    hub_link.py                Bluetooth connection via pybricksdev
+    sim_link.py                simulator link with the same interface
+    simulator.py               kinematic robot sim + fake pybricks modules
+    protocol.py                telemetry/command parsing (shared format)
+    field_store.py             load/validate/save missions.json
+    codegen.py                 waypoints -> mission Python code
+    recorder.py                save runs to logs/ for playback
+  dashboard/                   static files served by pc/server.py
+    index.html
+    app.js
+    field.js                   canvas field map, grid, polygons, robot
+    charts.js                  live graphs
+    editor.js                  click-to-plot tools
+    style.css
+  tests/
+    test_geometry.py
+    test_codegen.py
+    test_protocol.py
+    test_field_store.py
+    test_sim_runs.py
+  logs/                        recorded runs (gitignored)
+  docs/
+    DECISIONS.md
+    PROTOCOL.md
+    TUNING.md                  how to tune PID gains
+
+
+==================================================================
+3. TECH CHOICES
+==================================================================
+Hub: Pybricks firmware (v3.3 or newer), MicroPython. Only use modules
+     Pybricks provides (pybricks.*, umath, usys, uselect, ustruct...).
+     Use Pybricks async multitasking (multitask / run_task) so the PID loop
+     and mission code run at the same time. Verify the current API in the
+     Pybricks docs before writing it.
+PC:  Python 3.10+.
+     - pybricksdev for Bluetooth: find hub, compile + upload multi-file
+       programs, run them, read stdout, write stdin.
+     - aiohttp (or FastAPI + uvicorn) for HTTP + WebSocket. Pick one and
+       write the reason in DECISIONS.md.
+     - jsonschema for validating missions.json.
+     - pytest for tests.
+Dashboard: plain HTML + CSS + vanilla JavaScript + <canvas>.
+     No npm, no build step, no CDN required (must work offline at a
+     competition). Charts drawn by hand on canvas.
+
+Install for students must be:
+     pip install -r requirements.txt
+     python -m pc.server            (opens browser automatically)
+     python -m pc.server --sim      (no robot needed)
+
+
+==================================================================
+4. COMPONENT SPECS
+==================================================================
+
+4.1 robot/config.py
+  - Motor ports (left, right, attachment A, attachment B), direction
+    (clockwise/counterclockwise), wheel_diameter_mm, axle_track_mm.
+  - PID gains: DIST_KP, DIST_KI, DIST_KD, HEAD_KP, HEAD_KI, HEAD_KD.
+  - Tolerances: POS_TOL_IN = 0.25, HEAD_TOL_DEG = 1.0, SETTLE_MS = 100.
+  - Limits: MAX_SPEED_IN_S, MAX_ACCEL_IN_S2, MAX_TURN_RATE, MAX_TURN_ACCEL.
+  - TELEMETRY_HZ = 20 (lower it if Bluetooth can't keep up).
+  - Loop period: CONTROL_MS = 10.
+  - Values come from missions.json "robot" where possible; codegen may
+    write config.py from missions.json so there's one source of truth.
+
+4.2 robot/pose.py  (pose estimator)
+  - Reads left/right encoder angles each control tick.
+  - Distance moved = average wheel travel (degrees -> inches).
+  - Heading from hub IMU (hub.imu.heading()), mapped to our convention
+    (0 = +y, clockwise positive) with a settable offset.
+  - x += d*sin(h_mid), y += d*cos(h_mid), using the midpoint heading.
+  - set_pose(x, y, heading) resets everything (including the IMU offset).
+  - Exposes current_pos = (x, y, heading).
+
+4.3 robot/controller.py  (always-on PID)
+  - Runs forever as a background task every CONTROL_MS.
+  - State: target_pos (x, y, heading), mode, done flag.
+  - Modes:
+      HOLD   - stay at target (resist being pushed)
+      LINE   - drive along a straight segment from start to target point
+               while holding heading toward the target
+      TURN   - rotate in place to a target heading
+      ARC    - (later) follow an arc
+      IDLE   - motors coast/brake, no control
+  - For LINE: distance error = signed distance remaining along the path;
+    heading error = angle to the path; cross-track error corrects drift.
+    Output forward speed + turn rate, apply a trapezoid speed profile
+    (accel limit, cruise speed, decel to stop), then drive the two wheels
+    (either via DriveBase.drive(speed, turn_rate) or direct motor run()).
+    Document the choice in DECISIONS.md.
+  - For TURN: PID on wrapped heading error with a turn-rate profile.
+  - Anti-windup on all integrators. Clamp outputs to limits.
+  - done = error inside tolerance for SETTLE_MS.
+  - Stall detection: if commanded motion but no progress for 1.5 s, mark
+    the step as STALLED, report it in telemetry, continue to next step.
+
+4.4 robot/api.py  (the ONLY functions mission files use)
+  All are async (or blocking wrappers, whichever the Pybricks multitask
+  model needs); each sets target_pos and waits until done:
+    set_pose(x, y, heading)
+    drive(dist, speed=8)                 inches, + forward / - backward
+    turn(angle, speed=90)                degrees, + = clockwise
+    turn_to(heading, speed=90)           absolute heading
+    drive_to(x, y, speed=8)              turn_to the point, then drive
+    attachment(port, angle, speed=300)   relative motor move, degrees
+    attachment_to(port, angle, speed=300)
+    wait(ms)
+    square_to_wall(speed=3, back=True)   drive into a wall until stalled,
+                                         then fix heading and the matching
+                                         coordinate from the field file
+    beep(), log(text)                    log goes to the dashboard
+    mission(id)                          marks the start of a mission step
+                                         (shown on dashboard)
+  Validate inputs and raise clear errors ("drive(): speed must be > 0").
+
+4.5 robot/telemetry.py + pc/protocol.py
+  - Hub -> PC over stdout, one line per message, prefix-tagged so normal
+    print() output still works:
+      T,<ms>,<x>,<y>,<h>,<tx>,<ty>,<th>,<vl>,<vr>,<mode>,<state>,<batt_mv>
+      E,<ms>,<event>,<detail>       events: STEP_START, STEP_DONE, STALLED,
+                                    MISSION, RUN_START, RUN_END, ERROR
+      L,<ms>,<text>                 log() messages
+    Round numbers to 2 decimals to keep lines short.
+  - PC -> Hub over stdin (one line per command):
+      STOP            stop immediately, IDLE motors
+      PAUSE / RESUME
+      POSE,x,y,h      set_pose from the dashboard
+      GAINS,...       live PID tuning (optional, phase 6)
+  - Hub reads stdin without blocking (uselect.poll). Verify this works over
+    Bluetooth with the current Pybricks version; if not, document the
+    fallback in PROTOCOL.md.
+  - Telemetry must never slow down the control loop: send at TELEMETRY_HZ
+    from its own task and drop samples if behind.
+  - Write the full format in docs/PROTOCOL.md. protocol.py parses it and is
+    unit tested.
+
+4.6 robot/launcher.py
+  - Program uploaded to the hub when not using the dashboard.
+  - Left/right buttons choose run 1..N (number shown on the light matrix),
+    center button starts it. Same API, telemetry still printed.
+
+4.7 pc/hub_link.py and pc/sim_link.py
+  - Same async interface:
+      connect(name=None), disconnect(), upload_and_run(run_file),
+      send_command(line), stop(), on_line callback, status
+  - hub_link uses pybricksdev: scan for the hub, connect, compile robot/ +
+    the chosen missions/runN.py, run it, stream stdout lines.
+  - sim_link runs the same mission file in a PC process against
+    pc/simulator.py, producing identical T/E/L lines.
+  - Auto-reconnect with a visible status in the dashboard.
+
+4.8 pc/simulator.py
+  - Provides fake pybricks modules (Motor, DriveBase or motors, PrimeHub
+    with imu.heading(), buttons, light, speaker, StopWatch, wait,
+    multitask/run_task) so robot/ code runs unchanged on CPython.
+  - Differential-drive kinematics with configurable noise (wheel slip %,
+    gyro drift deg/min) to show why re-alignment matters.
+  - Walls at mat edges: square_to_wall works in the sim.
+  - Real-time or fast-forward mode (fast-forward for tests).
+
+4.9 pc/field_store.py
+  - Load, validate (missions.schema.json), and save field/missions.json.
+  - Save makes a timestamped backup in field/backups/ first.
+  - Check: polygons have >= 3 points, all points inside the mat, mission
+    ids unique, runs reference existing missions/launch areas.
+
+4.10 pc/codegen.py
+  - Input: start pose + list of waypoints (x, y, optional heading, optional
+    action like "attachment A 90" or "mission M03").
+  - Output: Python code using only api.py functions, following the rules in
+    CLAUDE.md (round to 0.1 in / 0.5 deg, comment expected pose after each
+    step, set_pose first).
+  - Option "use drive_to" vs "explicit turn + drive".
+  - Path check: warn if any segment (widened by the robot footprint + 1 in
+    clearance) crosses a mission or obstacle polygon.
+  - Writes/updates missions/runN.py. Never overwrite hand-edited code
+    outside a clearly marked generated block:
+        # --- BEGIN GENERATED (edit in dashboard) ---
+        # --- END GENERATED ---
+
+4.11 pc/server.py
+  - `python -m pc.server [--sim] [--port 8000] [--hub NAME]`
+  - Serves dashboard/ as static files.
+  - WebSocket /ws pushes parsed telemetry/events to the browser and accepts
+    commands (connect, run, stop, pause, set_pose, save_field, codegen).
+  - REST: GET/PUT /api/field, GET /api/runs, GET/PUT /api/runs/{id}/code,
+    GET /api/logs, GET /api/logs/{id}.
+  - Opens the browser on start. Binds to 127.0.0.1 only.
+
+4.12 pc/recorder.py
+  - Saves every run's telemetry to logs/<date>_<run>.csv plus events.
+  - Used by the dashboard's playback view.
+
+4.13 Dashboard (dashboard/)
+  Layout: field map (big, left), side panel (right), graphs (bottom).
+  Field map (canvas):
+    - Mat to scale, 1 in grid lines (darker every 6 in and 12 in), axis
+      labels in inches, optional mat.png background with opacity slider.
+    - Launch areas, mission polygons (labeled), obstacles, walls.
+    - Robot drawn as its footprint rectangle at current pose with a heading
+      arrow; target pose as a ghost outline; trail of the path driven.
+    - Mouse hover shows (x, y) snapped to the grid. Zoom + pan.
+  Side panel:
+    - Connection: Connect hub / Use simulator, status, battery.
+    - Run picker + Run / Stop / Pause buttons. Big STOP button; Space bar
+      also stops.
+    - Live pose numbers, current mission and step, event/log list.
+  Graphs: distance error, heading error, left/right wheel speed (last 10 s).
+  Editor mode (toggle):
+    - Draw polygon: click corners, double-click to close, name + id + points.
+    - Edit polygon: drag corners, delete corners, delete polygon.
+    - Set approach pose: click a point, drag to set heading.
+    - Plan run: pick start area, click waypoints, attach actions to
+      waypoints, see the path and clearance warnings, "Generate code"
+      shows the code preview, "Save" writes missions/runN.py.
+    - "Save field" writes missions.json (via field_store with backup).
+    - Undo/redo for editor actions.
+  Playback: pick a log, scrub a timeline, see the robot replay with the
+  planned path overlaid.
+  Must work at 1366x768 and up. Readable fonts, high-contrast colors.
+
+
+==================================================================
+5. BUILD PHASES (do in order; stop and report after each)
+==================================================================
+PHASE 1 - Geometry + simulator foundation
+  Build: robot/geometry.py, robot/config.py, pc/simulator.py (fake
+  pybricks), tests/test_geometry.py.
+  Check: pytest passes; angle wrap, heading-to-point, unit conversions
+  correct in all four quadrants.
+
+PHASE 2 - Pose + always-on PID + API (in the simulator)
+  Build: robot/pose.py, robot/controller.py, robot/api.py,
+  missions/_template.py, pc/sim_link.py (minimal), tests/test_sim_runs.py.
+  Check: in the sim with zero noise, a square path (drive 24, turn 90 x4)
+  ends within 0.25 in and 1 deg of start; drive_to reaches 5 random points
+  within tolerance; with noise on, square_to_wall corrects heading.
+
+PHASE 3 - Telemetry protocol
+  Build: robot/telemetry.py, pc/protocol.py, docs/PROTOCOL.md,
+  tests/test_protocol.py.
+  Check: the sim emits T/E/L lines at the configured rate; parser
+  round-trips; malformed lines are skipped, not fatal.
+
+PHASE 4 - Server + live dashboard (sim only)
+  Build: pc/server.py, pc/recorder.py, dashboard (field map, robot, trail,
+  side panel, graphs, run controls).
+  Check: `python -m pc.server --sim` opens the browser, running run1 shows
+  the robot moving live on the grid at the right coordinates; STOP works
+  within 200 ms; a log file is written.
+
+PHASE 5 - Field model + editor + codegen
+  Build: field/missions.schema.json, pc/field_store.py, pc/codegen.py,
+  dashboard editor mode, tests/test_field_store.py, tests/test_codegen.py.
+  Check: draw a polygon and save -> appears correctly in missions.json;
+  plan a run by clicking waypoints -> generated code runs in the sim and
+  the robot passes through every waypoint within 0.5 in; clearance warning
+  appears when the path crosses a polygon; hand-written code outside the
+  generated block survives regeneration.
+
+PHASE 6 - Real hub
+  Build: pc/hub_link.py, robot/launcher.py, stdin commands on the hub,
+  live gain tuning, docs/TUNING.md.
+  Check (needs the user + a real robot; give them a short checklist):
+    1. Server finds and connects to the hub, shows battery.
+    2. Uploading run1 works; telemetry appears live.
+    3. drive(24) on the real mat measures 24 in +/- 0.25 in.
+    4. turn(90) four times returns to the start heading +/- 2 deg.
+    5. STOP from the dashboard stops the robot.
+    6. The launcher works with no PC connected.
+  Ask the user to report results; adjust config/gains as needed.
+
+PHASE 7 - Playback, polish, docs
+  Build: playback view, README.md written for students (with
+  screenshots placeholders), error-message pass, final CLAUDE.md update
+  so it matches the real API and file paths exactly.
+  Check: a new user can follow README from a fresh machine to a running
+  simulator in under 10 minutes.
+
+
+==================================================================
+6. QUALITY RULES
+==================================================================
+- Hub code must stay small: MicroPython has limited memory. No large
+  libraries, avoid big lists of floats, reuse objects in the control loop,
+  no allocations inside the 10 ms loop if possible.
+- Same robot/ code must run on the hub and in the simulator unchanged.
+- Every PC module has tests; run pytest after each phase.
+- Type hints and docstrings on PC code; short comments on hub code.
+- Clear, kid-friendly error messages in the dashboard and on the hub.
+- Never crash the server on a bad telemetry line or a bad missions.json;
+  show the problem in the dashboard instead.
+- Keep CLAUDE.md accurate. Whenever the API, file layout or conventions
+  change, update CLAUDE.md in the same change.
+- Record important choices in docs/DECISIONS.md (one short entry each).
+
+
+==================================================================
+7. OPEN QUESTIONS TO ASK THE USER (don't guess these)
+==================================================================
+- Motor ports and directions for drive and attachment motors.
+- Wheel diameter and axle track (measure), robot footprint and where the
+  tracked center point is.
+- Real mat dimensions and launch area positions for this season.
+- Which missions to put in missions.json (they can also draw them in the
+  editor once Phase 5 is done).
+- Pybricks firmware version on the hub.
+- Whether they want the optional mat.png background.

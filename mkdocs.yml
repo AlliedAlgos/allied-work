@@ -1,0 +1,57 @@
+site_name: Allied Work
+site_description: "FLL SPIKE Prime toolkit - simple robot commands, a hub menu, a live dashboard and a simulator."
+docs_dir: work/docs
+site_dir: site
+use_directory_urls: false  # plain page.html links, so the built site also works opened from disk
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: {icon: material/weather-night, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: {icon: material/weather-sunny, name: Switch to light mode}
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+plugins:
+  - search   # offline search, no internet needed
+
+markdown_extensions:
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+
+nav:
+  - Home: README.md
+  - Start here:
+      - Getting started: GETTING_STARTED.md
+      - Writing missions: WRITING_MISSIONS.md
+      - Command reference: API.md
+      - The hub menu: HUB_MENU.md
+  - Using the tools:
+      - Sensor dashboard: DASHBOARD.md
+      - Simulator: SIMULATOR.md
+      - Tuning and calibration: TUNING.md
+      - Field model: FIELD_MODEL.md
+      - Troubleshooting: TROUBLESHOOTING.md
+  - Under the hood:
+      - Architecture: ARCHITECTURE.md
+      - Hub output protocol: PROTOCOL.md
+      - Decisions: DECISIONS.md
+  - Changelog: CHANGELOG.md

@@ -1,0 +1,163 @@
+{
+  "_readme": "Field model for FLL Mission Control. All units are INCHES. Grid is 1 in x 1 in. Origin (0,0) = bottom-left corner of the mat as seen from the team's launch side. +x = right along the long edge, +y = up toward the far wall. Heading: 0 deg = facing +y, positive = clockwise (90 = facing +x). Edit polygons by clicking points in the dashboard; it writes back to this file.",
+  "season": "TODO: season name",
+  "mat": {
+    "width_in": 93,
+    "height_in": 45,
+    "grid_in": 1,
+    "note": "Standard FLL mat is about 93 x 45 in. Measure your printed mat and correct these if different."
+  },
+  "robot": {
+    "wheel_diameter_mm": 56,
+    "axle_track_mm": 112,
+    "footprint_in": {
+      "width": 0,
+      "length": 0
+    },
+    "center_offset_in": {
+      "forward": 0,
+      "note": "distance from wheel axle to the point we track as the robot's position"
+    },
+    "note": "TODO: measure your robot and fill these in. Wheel diameter 56 mm = standard SPIKE Prime wheel."
+  },
+  "launch_areas": [
+    {
+      "id": "home_left",
+      "name": "Left launch area",
+      "polygon": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "default_start_pose": {
+        "x": 0,
+        "y": 0,
+        "heading": 0
+      }
+    },
+    {
+      "id": "home_right",
+      "name": "Right launch area",
+      "polygon": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "default_start_pose": {
+        "x": 0,
+        "y": 0,
+        "heading": 0
+      }
+    }
+  ],
+  "alignment_features": [
+    {
+      "id": "example_wall_south",
+      "type": "wall",
+      "segment": [
+        [
+          0,
+          0
+        ],
+        [
+          93,
+          0
+        ]
+      ],
+      "note": "Walls and black lines the robot can square against or detect to correct its position."
+    }
+  ],
+  "missions": [
+    {
+      "id": "M00_example",
+      "name": "EXAMPLE - delete me",
+      "points": 0,
+      "polygon": [
+        [
+          40,
+          20
+        ],
+        [
+          46,
+          20
+        ],
+        [
+          46,
+          26
+        ],
+        [
+          40,
+          26
+        ]
+      ],
+      "approach": {
+        "x": 43,
+        "y": 16,
+        "heading": 0
+      },
+      "attachment": "none",
+      "notes": "Polygon = the model's footprint on the mat. Approach = where the robot should be (and which way it should face) right before it does the mission."
+    }
+  ],
+  "obstacles": [
+    {
+      "id": "example_obstacle",
+      "polygon": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "note": "Anything the robot must drive around that isn't a mission model."
+    }
+  ],
+  "runs": [
+    {
+      "id": "run1",
+      "start": "home_left",
+      "missions": [
+        "M00_example"
+      ],
+      "waypoints": [],
+      "notes": "A run = one launch from home. Waypoints are clicked in the dashboard and turned into drive()/turn() calls."
+    }
+  ]
+}

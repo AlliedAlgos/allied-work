@@ -1,0 +1,12 @@
+# Hub API (autocomplete + type checking for hardware/ code; the hub itself runs its own firmware copy)
+pybricks>=4.0
+# Talk to the hub over Bluetooth/USB
+pybricksdev>=2.0
+# Dashboard server
+aiohttp>=3.9
+# Field file validation (later phases)
+jsonschema>=4.0
+# Tests
+pytest>=8.0
+# Documentation website (python run.py docs)
+mkdocs-material>=9.5

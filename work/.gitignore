@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+logs/
+field/backups/
+node_modules/

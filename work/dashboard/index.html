@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot Sensors</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #1a1f27; --line: #2c3440; --text: #f2f5f8; --dim: #9aa7b6;
+    --good: #3ddc84; --warn: #ffb020; --bad: #ff5c5c; --accent: #4cc2ff;
+    --c0: #4cc2ff; --c1: #ffb020; --c2: #3ddc84; --c3: #ff7ad9;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef1f5; --card: #fff; --line: #cfd6df; --text: #10151c; --dim: #4d5b6b;
+      --good: #12894a; --warn: #b36b00; --bad: #c62828; --accent: #0a6cc4;
+      --c0: #0a6cc4; --c1: #b36b00; --c2: #12894a; --c3: #b0188f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.3 system-ui, sans-serif;
+         font-variant-numeric: tabular-nums; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  .pill { padding: 4px 12px; border-radius: 999px; border: 2px solid var(--dim); font-weight: 600; }
+  .pill.connected { border-color: var(--good); color: var(--good); }
+  .pill.connecting, .pill.starting { border-color: var(--warn); color: var(--warn); }
+  .pill.disconnected, .pill.error { border-color: var(--bad); color: var(--bad); }
+  button { background: var(--card); color: var(--text); border: 2px solid var(--line); border-radius: 8px;
+           padding: 6px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 12px; padding: 12px 16px; }
+  .col { display: grid; gap: 12px; align-content: start; }
+  .motors { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 14px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  .big { font-size: 34px; font-weight: 700; line-height: 1.1; }
+  .unit { font-size: 14px; color: var(--dim); font-weight: 400; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; }
+  .row span:first-child { color: var(--dim); }
+  .bar { position: relative; height: 10px; background: var(--line); border-radius: 5px; margin-top: 4px; overflow: hidden; }
+  .bar i { position: absolute; top: 0; bottom: 0; background: var(--accent); }
+  .bar.center::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--dim); }
+  .load i { background: var(--good); }
+  .load.hot i { background: var(--bad); }
+  canvas { display: block; width: 100%; }
+  .missing { color: var(--dim); font-style: italic; padding: 20px 0; }
+  .swatch { height: 70px; border-radius: 8px; border: 2px solid var(--line); margin-bottom: 8px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--dim); margin-top: 4px; }
+  .legend b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+  body.stale main { opacity: .35; }
+  #nodata { display: none; color: var(--bad); font-weight: 700; }
+  body.stale #nodata { display: inline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Robot Sensors</h1>
+  <span id="nodata">NO DATA</span>
+  <span id="batt" class="pill">Battery --</span>
+  <span id="status" class="pill starting">Starting...</span>
+  <button id="freeze" aria-pressed="false">Freeze</button>
+</header>
+
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>Gyro</h2>
+      <canvas id="compass" width="300" height="190"></canvas>
+      <div class="row"><span>Heading</span><span class="big" id="heading">--</span></div>
+      <div class="row"><span>Turn rate</span><span id="rate">--</span></div>
+      <div class="row"><span>Pitch / Roll</span><span id="tilt">--</span></div>
+    </section>
+    <section class="card" id="colorCard">
+      <h2>Color sensor</h2>
+      <div id="colorBody"><div class="missing">Not detected</div></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <div class="motors" id="motors"></div>
+    <section class="card">
+      <h2>Last 10 seconds</h2>
+      <canvas id="chartSpeed" width="900" height="130"></canvas>
+      <div class="legend" id="legend"></div>
+      <canvas id="chartHead" width="900" height="90" style="margin-top:8px"></canvas>
+      <div class="legend"><span><b style="background:var(--accent)"></b>Heading (deg)</span></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const MOTORS = [["F", "Left drive"], ["B", "Right drive"], ["A", "Left attachment"], ["E", "Right attachment"]];
+const MAX_SPEED = 1000, WINDOW_MS = 10000, STALE_MS = 1500;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (v, d = 0) => v == null ? "--" : v.toFixed(d);
+
+let frozen = false, lastRx = 0, lastReading = null;
+const history = [];  // {t, heading, speeds:{A..}}
+
+// ---- build motor cards once ----
+$("motors").innerHTML = MOTORS.map(([p, name]) => `
+  <section class="card" id="m${p}">
+    <h2>Motor ${p} · ${name}</h2>
+    <div class="missing" hidden>Not connected</div>
+    <div class="body">
+      <div class="row"><span>Angle</span><span class="big"><span data-f="angle">--</span><span class="unit">°</span></span></div>
+      <div class="row"><span>Speed</span><span><b data-f="speed">--</b> <span class="unit">°/s</span></span></div>
+      <div class="bar center"><i data-f="speedBar"></i></div>
+      <div class="row"><span>Load</span><span><b data-f="load">--</b> <span class="unit">%</span></span></div>
+      <div class="bar load"><i data-f="loadBar"></i></div>
+    </div>
+  </section>`).join("");
+$("legend").innerHTML = MOTORS.map(([p, n], i) =>
+  `<span><b style="background:var(--c${i})"></b>${p} ${n}</span>`).join("");
+
+function field(card, f) { return card.querySelector(`[data-f="${f}"]`); }
+
+// ---- rendering ----
+function render(r) {
+  const g = r.gyro;
+  $("heading").innerHTML = `${fmt(g.heading, 1)}<span class="unit">°</span>`;
+  $("rate").textContent = g.yaw_rate == null ? "--" : `${fmt(g.yaw_rate, 1)} °/s`;
+  $("tilt").textContent = `${fmt(g.pitch)}° / ${fmt(g.roll)}°`;
+  drawCompass(g.heading || 0);
+
+  const mv = r.battery_mv, b = $("batt");
+  b.textContent = `Battery ${(mv / 1000).toFixed(2)} V`;
+  b.style.borderColor = mv < 7200 ? css("--bad") : mv < 7700 ? css("--warn") : css("--good");
+  b.style.color = b.style.borderColor;
+
+  for (const [p] of MOTORS) {
+    const card = $("m" + p), m = r.motors[p];
+    card.querySelector(".missing").hidden = !!m;
+    card.querySelector(".body").hidden = !m;
+    if (!m) continue;
+    field(card, "angle").textContent = fmt(m.angle);
+    field(card, "speed").textContent = fmt(m.speed);
+    field(card, "load").textContent = fmt(m.load);
+    const s = Math.max(-1, Math.min(1, m.speed / MAX_SPEED)), bar = field(card, "speedBar");
+    bar.style.left = (s < 0 ? 50 + s * 50 : 50) + "%";
+    bar.style.width = Math.abs(s) * 50 + "%";
+    const lb = field(card, "loadBar");
+    lb.style.left = "0"; lb.style.width = Math.min(100, Math.max(0, m.load)) + "%";
+    lb.parentElement.classList.toggle("hot", m.load >= 80);
+  }
+  renderColor(r.color);
+}
+
+function hsvCss(h, s, v) {  // hub HSV (0-359, 0-100, 0-100) -> CSS hsl()
+  s /= 100; v /= 100;
+  const l = v * (1 - s / 2), sl = (l === 0 || l === 1) ? 0 : (v - l) / Math.min(l, 1 - l);
+  return `hsl(${h} ${(sl * 100).toFixed(0)}% ${(l * 100).toFixed(0)}%)`;
+}
+
+function renderColor(c) {
+  if (!c) { $("colorBody").innerHTML = '<div class="missing">Not detected (check ports C / D)</div>'; return; }
+  $("colorBody").innerHTML = `
+    <div class="swatch" style="background:${hsvCss(c.h, c.s, c.v)}"></div>
+    <div class="row"><span>Color</span><span class="big">${c.name}</span></div>
+    <div class="row"><span>Reflection</span><span><b>${fmt(c.reflection)}</b> <span class="unit">%</span></span></div>
+    <div class="bar"><i style="left:0;width:${c.reflection}%"></i></div>
+    <div class="row"><span>Ambient</span><span><b>${fmt(c.ambient)}</b> <span class="unit">%</span></span></div>
+    <div class="row"><span>H / S / V</span><span>${fmt(c.h)}° / ${fmt(c.s)} / ${fmt(c.v)}</span></div>`;
+}
+
+function drawCompass(h) {
+  const cv = $("compass"), x = cv.getContext("2d"), W = cv.width, H = cv.height;
+  const cx = W / 2, cy = H / 2, R = 80;
+  x.clearRect(0, 0, W, H);
+  x.strokeStyle = css("--line"); x.lineWidth = 3;
+  x.beginPath(); x.arc(cx, cy, R, 0, 7); x.stroke();
+  x.fillStyle = css("--dim"); x.font = "bold 14px system-ui"; x.textAlign = "center"; x.textBaseline = "middle";
+  [["0", 0], ["90", 90], ["180", 180], ["270", 270]].forEach(([t, a]) => {
+    const r = a * Math.PI / 180;
+    x.fillText(t, cx + (R + 16) * Math.sin(r), cy - (R + 16) * Math.cos(r));
+  });
+  const a = h * Math.PI / 180;  // 0 = up, clockwise positive
+  x.save(); x.translate(cx, cy); x.rotate(a);
+  x.fillStyle = css("--accent");
+  x.beginPath(); x.moveTo(0, -R + 6); x.lineTo(14, 14); x.lineTo(0, 6); x.lineTo(-14, 14); x.closePath(); x.fill();
+  x.restore();
+}
+
+function drawChart(id, series, colors, lo, hi, unit) {
+  const cv = $(id), x = cv.getContext("2d"), W = cv.width, H = cv.height, pad = 40;
+  x.clearRect(0, 0, W, H);
+  x.font = "12px system-ui"; x.textBaseline = "middle"; x.fillStyle = css("--dim"); x.strokeStyle = css("--line");
+  x.lineWidth = 1;
+  [lo, (lo + hi) / 2, hi].forEach(v => {
+    const y = H - 6 - (v - lo) / (hi - lo) * (H - 12);
+    x.beginPath(); x.moveTo(pad, y); x.lineTo(W, y); x.stroke();
+    x.textAlign = "right"; x.fillText(Math.round(v) + unit, pad - 4, y);
+  });
+  const now = history.length ? history[history.length - 1].t : 0;
+  series.forEach((get, i) => {
+    x.strokeStyle = colors[i]; x.lineWidth = 2; x.beginPath();
+    let started = false;
+    for (const p of history) {
+      const v = get(p); if (v == null) { started = false; continue; }
+      const px = pad + (1 - (now - p.t) / WINDOW_MS) * (W - pad);
+      const py = H - 6 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (H - 12);
+      started ? x.lineTo(px, py) : x.moveTo(px, py); started = true;
+    }
+    x.stroke();
+  });
+}
+
+function drawCharts() {
+  const cols = [0, 1, 2, 3].map(i => css(`--c${i}`));
+  drawChart("chartSpeed", MOTORS.map(([p]) => pt => pt.speeds[p]), cols, -MAX_SPEED, MAX_SPEED, "");
+  let lo = -10, hi = 10;
+  for (const p of history) if (p.heading != null) { lo = Math.min(lo, p.heading); hi = Math.max(hi, p.heading); }
+  drawChart("chartHead", [pt => pt.heading], [css("--accent")], Math.floor(lo / 10) * 10, Math.ceil(hi / 10) * 10, "");
+}
+
+// ---- data in ----
+function onReading(r) {
+  lastRx = performance.now(); lastReading = r;
+  const t = lastRx, speeds = {};
+  for (const [p] of MOTORS) speeds[p] = r.motors[p] ? r.motors[p].speed : null;
+  history.push({ t, heading: r.gyro.heading, speeds });
+  while (history.length && t - history[0].t > WINDOW_MS) history.shift();
+  if (!frozen) { render(r); drawCharts(); }
+}
+
+function setStatus(s) {
+  const el = $("status"); el.textContent = s.message; el.className = "pill " + s.state;
+}
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "reading") onReading(m); else if (m.type === "status") setStatus(m);
+  };
+  ws.onclose = () => { setStatus({ state: "disconnected", message: "Server not reachable. Retrying..." }); setTimeout(connect, 1500); };
+}
+
+$("freeze").onclick = () => {
+  frozen = !frozen;
+  $("freeze").setAttribute("aria-pressed", frozen);
+  $("freeze").textContent = frozen ? "Frozen (tap to resume)" : "Freeze";
+  if (!frozen && lastReading) { render(lastReading); drawCharts(); }
+};
+setInterval(() => document.body.classList.toggle("stale", performance.now() - lastRx > STALE_MS), 500);
+
+drawCompass(0); drawCharts();
+connect();
+</script>
+</body>
+</html>

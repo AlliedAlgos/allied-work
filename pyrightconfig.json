@@ -1,0 +1,4 @@
+{
+  "extraPaths": ["hardware", "work"],
+  "pythonVersion": "3.10"
+}
